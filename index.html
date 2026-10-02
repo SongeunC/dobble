@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>도블 찾기</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { min-height: 100dvh; display: flex; flex-direction: column; }
+    main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+    .join { width: min(100%, 380px); display: flex; flex-direction: column; gap: 16px; }
+    .join h1 { margin: 0 0 4px; font-size: 28px; text-align: center; }
+    .code-input { text-transform: uppercase; letter-spacing: 0.3em; text-align: center; font-size: 24px; font-weight: 800; }
+    .nick-input { font-size: 20px; text-align: center; }
+    .join .btn { padding: 14px; font-size: 18px; }
+    .center-msg { text-align: center; font-size: 22px; font-weight: 700; line-height: 1.5; }
+    .center-msg small { display: block; font-size: 16px; font-weight: 500; color: var(--muted); }
+
+    .play { width: 100%; height: 100%; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+    .play .card { width: min(92vw, calc(100dvh - 170px), 640px); }
+    .found {
+      width: min(92vw, 420px);
+      padding: 18px;
+      font-size: 24px;
+      border-radius: 18px;
+    }
+    .nick-tag { position: fixed; top: 10px; left: 12px; font-size: 14px; color: var(--muted); font-weight: 600; }
+
+    .card.swap-out { animation: swapOut 180ms ease-in forwards; }
+    .card.swap-in { animation: swapIn 260ms cubic-bezier(.2,.9,.3,1.2); }
+    @keyframes swapOut { to { transform: scale(0.6) rotate(-40deg); opacity: 0; } }
+    @keyframes swapIn { from { transform: scale(0.6) rotate(40deg); opacity: 0; } }
+
+    .overlay {
+      position: fixed; inset: 0; background: rgba(247, 248, 251, 0.92);
+      display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+  </style>
+</head>
+<body>
+  <span class="nick-tag" id="nickTag" hidden></span>
+  <main>
+    <form class="join" id="joinView" hidden>
+      <h1>도블 찾기</h1>
+      <div class="field">
+        <label for="code">입장 코드</label>
+        <input class="input code-input" id="code" maxlength="6" autocomplete="off" autocapitalize="characters" required>
+      </div>
+      <div class="field">
+        <label for="nick">닉네임</label>
+        <input class="input nick-input" id="nick" maxlength="10" autocomplete="off" required>
+        <span class="notice">진짜 이름은 쓰지 마세요. 별명을 써 주세요.</span>
+      </div>
+      <button class="btn primary" type="submit" id="joinBtn">들어가기</button>
+      <p class="error" id="joinError" hidden></p>
+    </form>
+
+    <div class="center-msg" id="waitView" hidden>
+      들어왔어요!<small>선생님이 시작하면 카드가 나와요.</small>
+    </div>
+
+    <div class="play" id="playView" hidden>
+      <div class="card" id="card"></div>
+      <button class="btn primary found" id="foundBtn">찾았어요!</button>
+    </div>
+
+    <div class="center-msg" id="endView" hidden>
+      끝! 수고했어요.<small>선생님 화면을 봐 주세요.</small>
+    </div>
+  </main>
+
+  <div class="overlay" id="pauseView" hidden>
+    <div class="center-msg">잠깐 멈췄어요<small>선생님이 다시 시작할 때까지 기다려요.</small></div>
+  </div>
+  <div class="overlay" id="lostView" hidden>
+    <div class="center-msg">연결을 다시 찾는 중이에요…<small>잠시 기다려 주세요.</small></div>
+  </div>
+
+  <script type="module" src="js/student.js"></script>
+</body>
+</html>

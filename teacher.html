@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>도블 찾기 · 교사</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    header {
+      display: flex; align-items: center; gap: 12px; padding: 12px 20px;
+      background: var(--surface); border-bottom: 1px solid var(--line);
+      position: sticky; top: 0; z-index: 5;
+    }
+    header h1 { font-size: 18px; margin: 0; flex: 1; }
+    .badge { font-size: 13px; padding: 4px 10px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
+    h2 { margin: 0 0 4px; font-size: 22px; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .spread { justify-content: space-between; }
+    .stack { display: flex; flex-direction: column; gap: 16px; }
+
+    /* 로그인 */
+    .login { max-width: 420px; margin: 60px auto; text-align: center; }
+
+    /* 세트 목록 */
+    .set-list { display: grid; gap: 10px; margin-top: 16px; }
+    .set-row { display: flex; align-items: center; gap: 12px; padding: 14px 16px; flex-wrap: wrap; }
+    .set-row .name { font-weight: 700; flex: 1; min-width: 160px; cursor: pointer; }
+    .set-row .name:hover { color: var(--accent); }
+    .set-row .meta { font-size: 13px; color: var(--muted); font-weight: 500; display: block; }
+
+    /* 편집기 */
+    .editor-top { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
+    .count { font-weight: 800; font-size: 18px; }
+    .count.done { color: var(--good); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; margin-top: 12px; }
+    .tile {
+      position: relative; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+      display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 6px; overflow: hidden;
+      font-weight: 700; text-align: center; word-break: keep-all; font-size: 15px;
+    }
+    .tile:hover { border-color: var(--accent); }
+    .tile.empty { border-style: dashed; color: #b0b7c5; font-weight: 500; }
+    .tile.start { outline: 3px solid var(--accent); outline-offset: -2px; }
+    .tile.dup { background: #fff4ed; border-color: var(--warn); }
+    .tile .num { position: absolute; top: 4px; left: 6px; font-size: 11px; color: var(--muted); font-weight: 600; }
+    .tile .emo { font-size: 40px; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+    .tile img { width: 100%; height: 100%; object-fit: contain; }
+
+    dialog { border: none; border-radius: var(--radius); padding: 24px; width: min(92vw, 460px); box-shadow: 0 20px 60px rgba(0,0,0,.2); }
+    dialog::backdrop { background: rgba(20, 25, 40, .4); }
+    dialog .stack { gap: 14px; }
+    textarea.input { min-height: 180px; resize: vertical; }
+    .preview-card { width: min(80vw, 380px, calc(100dvh - 160px)); margin: 0 auto; }
+
+    /* 방 진행 */
+    .room { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 20px; align-items: start; }
+    .join-box { text-align: center; }
+    .room-code { font-size: 56px; font-weight: 900; letter-spacing: 0.12em; margin: 6px 0; }
+    .qr { display: flex; justify-content: center; margin: 12px 0; }
+    .qr img, .qr canvas { width: 220px; height: 220px; }
+    .join-url { font-size: 13px; word-break: break-all; }
+    .status-pill { font-weight: 800; padding: 6px 12px; border-radius: 99px; background: #eef1f6; }
+    .status-pill.playing { background: #e3f6ec; color: var(--good); }
+    .status-pill.paused { background: #fff4ed; color: var(--warn); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+    th { font-size: 13px; color: var(--muted); }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--good); margin-right: 8px; }
+    .dot.off { background: #c4cad6; }
+    .score { font-weight: 800; font-size: 20px; }
+    .switch { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+    .switch input { width: 20px; height: 20px; }
+
+    @media (max-width: 760px) {
+      .room { grid-template-columns: 1fr; }
+      .editor-top { grid-template-columns: 1fr; }
+      .room-code { font-size: 44px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>도블 찾기 · 교사</h1>
+    <span class="badge" id="modeBadge" hidden>데모 모드</span>
+    <span class="muted" id="who"></span>
+    <button class="btn small" id="logoutBtn" hidden>나가기</button>
+  </header>
+
+  <main>
+    <!-- 로그인 -->
+    <form id="loginView" class="login panel stack" hidden>
+      <div>
+        <h2>선생님 입장</h2>
+        <p class="muted" style="margin:0">관리자에게 받은 모임 코드와 별명을 넣어 주세요.</p>
+      </div>
+      <div class="field" style="text-align:left">
+        <label for="teamCode">모임 코드</label>
+        <input class="input" id="teamCode" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="field" style="text-align:left">
+        <label for="teacherName">내 별명</label>
+        <input class="input" id="teacherName" maxlength="20" autocomplete="nickname" placeholder="덱 목록에 만든 사람으로 보여요" required>
+      </div>
+      <button class="btn primary" type="submit" id="loginBtn">들어가기</button>
+      <p class="error" id="loginError" hidden></p>
+    </form>
+
+    <!-- 세트 목록 -->
+    <section id="setsView" hidden>
+      <div class="row spread">
+        <div>
+          <h2>카드 세트</h2>
+          <p class="muted" style="margin:0">세트를 골라 방을 열거나, 수업 단어로 새 세트를 만드세요.</p>
+        </div>
+        <button class="btn primary" id="newSetBtn">새 세트 만들기</button>
+      </div>
+      <div class="set-list" id="setList"></div>
+      <p class="error" id="setsError" hidden></p>
+    </section>
+
+    <!-- 세트 편집기 -->
+    <section id="editorView" class="stack" hidden>
+      <div class="editor-top">
+        <div class="field">
+          <label for="setName">세트 이름</label>
+          <input class="input" id="setName" maxlength="40" placeholder="예: 3단원 낱말 복습">
+        </div>
+        <div class="row">
+          <span class="count" id="itemCount">0 / 57</span>
+          <button class="btn" id="cancelEditBtn">닫기</button>
+          <button class="btn primary" id="saveSetBtn">저장</button>
+        </div>
+      </div>
+      <div class="row">
+        <button class="btn small" id="pasteBtn">단어 붙여넣기</button>
+        <button class="btn small" id="imagesBtn">이미지 여러 장 올리기</button>
+        <input type="file" id="imagesInput" accept="image/*" multiple hidden>
+        <button class="btn small" id="fillDefaultBtn">빈 칸을 기본 그림으로 채우기</button>
+        <button class="btn small" id="previewBtn">카드 미리보기</button>
+        <button class="btn small danger" id="clearBtn">모두 비우기</button>
+      </div>
+      <p class="muted" style="margin:0" id="editorHint">칸을 누르면 그 칸을 고치고, 붙여넣기와 여러 장 올리기는 파란 테두리 칸부터 차례로 채웁니다.</p>
+      <p class="notice" id="dupNotice" hidden></p>
+      <p class="error" id="editorError" hidden></p>
+      <div class="grid" id="grid"></div>
+    </section>
+
+    <!-- 방 진행 -->
+    <section id="roomView" hidden>
+      <div class="room">
+        <div class="panel join-box">
+          <div class="muted">입장 코드</div>
+          <div class="room-code" id="roomCode"></div>
+          <div class="qr" id="qr"></div>
+          <div class="join-url muted" id="joinUrl"></div>
+        </div>
+        <div class="panel stack">
+          <div class="row spread">
+            <div class="row">
+              <span class="status-pill" id="statusPill"></span>
+              <span class="muted" id="roomSetName"></span>
+            </div>
+            <label class="switch"><input type="checkbox" id="soundToggle"> 효과음</label>
+          </div>
+          <div class="row">
+            <button class="btn primary" id="startBtn">시작</button>
+            <button class="btn" id="pauseBtn">일시정지</button>
+            <button class="btn" id="resumeBtn">다시 시작</button>
+            <button class="btn danger" id="endBtn">종료</button>
+            <button class="btn" id="closeRoomBtn">방 닫기</button>
+          </div>
+          <div>
+            <div class="row spread"><strong id="studentCount">학생 0명</strong></div>
+            <table>
+              <thead><tr><th>닉네임</th><th>상태</th><th class="num">찾은 횟수</th></tr></thead>
+              <tbody id="studentRows"></tbody>
+            </table>
+            <p class="muted" id="noStudents">학생이 들어오면 여기에 보여요.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 종료 요약 -->
+    <section id="summaryView" class="stack" hidden>
+      <div class="row spread">
+        <div>
+          <h2>판 결과</h2>
+          <p class="muted" style="margin:0">이 결과는 저장되지 않아요. 화면을 닫으면 사라집니다.</p>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="againBtn">같은 방에서 한 판 더</button>
+          <button class="btn" id="finishBtn">방 닫기</button>
+        </div>
+      </div>
+      <div class="panel">
+        <table>
+          <thead><tr><th class="num" style="width:60px">순위</th><th>닉네임</th><th class="num">찾은 횟수</th></tr></thead>
+          <tbody id="summaryRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- 칸 고치기 -->
+  <dialog id="itemDialog">
+    <form method="dialog" class="stack" id="itemForm">
+      <h2 id="itemTitle">칸 고치기</h2>
+      <div class="field">
+        <label for="itemWord">단어 또는 이모지</label>
+        <input class="input" id="itemWord" maxlength="12" autocomplete="off">
+      </div>
+      <div class="row">
+        <button type="button" class="btn small" id="itemImageBtn">이미지 고르기</button>
+        <input type="file" id="itemImageInput" accept="image/*" hidden>
+        <span class="muted" id="itemImageName"></span>
+      </div>
+      <div class="row spread">
+        <button type="button" class="btn small danger" id="itemClearBtn">비우기</button>
+        <div class="row">
+          <button type="button" class="btn" id="itemCancelBtn">취소</button>
+          <button type="submit" class="btn primary">확인</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 단어 붙여넣기 -->
+  <dialog id="pasteDialog">
+    <form method="dialog" class="stack" id="pasteForm">
+      <h2>단어 붙여넣기</h2>
+      <p class="muted" style="margin:0">한 줄에 하나씩, 또는 쉼표로 나눠 붙여넣으세요. <strong id="pasteStart">1번</strong> 칸부터 채웁니다.</p>
+      <textarea class="input" id="pasteText" placeholder="사과&#10;바나나&#10;포도"></textarea>
+      <div class="row spread">
+        <span class="muted" id="pasteCount">0개</span>
+        <div class="row">
+          <button type="button" class="btn" id="pasteCancelBtn">취소</button>
+          <button type="submit" class="btn primary">채우기</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 카드 미리보기 -->
+  <dialog id="previewDialog">
+    <div class="stack">
+      <div class="card preview-card" id="previewCard"></div>
+      <div class="row spread">
+        <button class="btn" id="previewNextBtn">다른 카드</button>
+        <button class="btn primary" id="previewCloseBtn">닫기</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="js/teacher.js"></script>
+</body>
+</html>
