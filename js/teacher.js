@@ -13,7 +13,7 @@ const BUILTIN_SETS = [
 const $ = (id) => document.getElementById(id);
 const views = ['loginView', 'setsView', 'editorView', 'roomView', 'summaryView'];
 const ROOM_KEY = 'dobble-room';
-const ONLINE_MS = 15000;   // 이 시간 안에 신호가 있으면 접속 중
+const ONLINE_MS = 25000;   // 이 시간 안에 신호가 있으면 접속 중 (학생은 10초마다 신호)
 const RELEASE_MS = 60000;  // 이 시간 넘게 끊기면 카드를 다른 학생에게 줄 수 있다
 
 function show(name) {
@@ -373,7 +373,7 @@ function restoreRoom() {
 async function enterRoom() {
   saveRoom();
   try {
-    channel = await api.openChannel(room.code, onMessage);
+    channel = await api.openTeacherLink(room.code, onMessage);
   } catch (e) {
     alert(e.message);
     room = null;
@@ -389,12 +389,19 @@ async function enterRoom() {
   $('roomSetName').textContent = room.setName;
   $('soundToggle').checked = room.sound;
   clearInterval(ticker);
-  ticker = setInterval(() => { broadcastState(); renderRoom(); }, 4000);
+  // 화면은 4초마다 다시 그리고, 판 상태는 10초마다 다시 알린다(메시지 수를 아끼려고)
+  let tick = 0;
+  ticker = setInterval(() => { if (++tick % 3 === 0) broadcastState(); renderRoom(); }, 4000);
   broadcastState();
   if (room.status === 'ended') showSummary(); else { show('roomView'); renderRoom(); }
 }
 
-function send(event, payload) { channel?.send(event, payload); }
+// 받는 학생(to)이 있으면 그 학생에게만, 없으면 방 전체에 보낸다
+function send(event, payload) {
+  if (!channel) return;
+  if (payload?.to) channel.sendTo(payload.to, event, payload);
+  else channel.broadcast(event, payload);
+}
 function broadcastState() { send('state', { status: room.status, sound: room.sound }); }
 
 function isOnline(st) { return Date.now() - st.lastSeen < ONLINE_MS; }

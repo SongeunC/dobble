@@ -127,31 +127,75 @@ export async function imageUrl(image) {
   return image;
 }
 
-// ---------- 실시간 채널 ----------
-// 방 코드 하나 = 채널 하나. 판 상태는 DB에 쓰지 않고 메시지로만 주고받는다.
+// ---------- 실시간 통신 ----------
+// 판 상태는 DB에 쓰지 않고 메시지로만 주고받는다. Supabase는 '받는 사람 수만큼' 메시지를 세므로
+// 방 하나에 길을 세 개 둬서, 필요한 사람만 받게 한다.
+//   방 전체:     교사 → 모든 학생 (판 상태)
+//   교사 우편함: 학생 → 교사 (입장, 접속 확인, 찾았어요). 다른 학생은 받지 않는다.
+//   학생 우편함: 교사 → 그 학생 (카드, 입장 확인). 다른 학생은 받지 않는다.
+// 보내는 쪽은 채널에 들어가지 않고 HTTP로 보낸다(보낼 때 1개 + 받는 사람마다 1개로 셈).
 
-export async function openChannel(code, onMessage) {
-  const name = `dobble-${code}`;
+const topics = (code) => ({
+  room: `dobble-${code}`,
+  inbox: `dobble-${code}-t`,
+  student: (id) => `dobble-${code}-s-${id}`,
+});
+
+const demoSenders = new Map();
+
+async function listen(names, onMessage) {
   if (MODE === 'demo') {
-    const bc = new BroadcastChannel(name);
-    bc.onmessage = (e) => onMessage(e.data.event, e.data.payload);
-    return {
-      send: (event, payload) => bc.postMessage({ event, payload }),
-      close: () => bc.close(),
-    };
+    const chans = names.map((name) => {
+      const bc = new BroadcastChannel(name);
+      bc.onmessage = (e) => onMessage(e.data.event, e.data.payload);
+      return bc;
+    });
+    return () => chans.forEach((bc) => bc.close());
   }
   const sb = await client();
-  const ch = sb.channel(name, { config: { broadcast: { self: false } } });
-  ch.on('broadcast', { event: '*' }, (msg) => onMessage(msg.event, msg.payload));
-  await new Promise((resolve, reject) => {
+  const chans = await Promise.all(names.map((name) => new Promise((resolve, reject) => {
+    const ch = sb.channel(name, { config: { broadcast: { self: false } } });
+    ch.on('broadcast', { event: '*' }, (msg) => onMessage(msg.event, msg.payload));
     ch.subscribe((status) => {
-      if (status === 'SUBSCRIBED') resolve();
+      if (status === 'SUBSCRIBED') resolve(ch);
       else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') reject(new Error(`실시간 연결 실패 (${status})`));
     });
-  });
+  })));
+  return () => chans.forEach((ch) => sb.removeChannel(ch));
+}
+
+function post(topic, event, payload) {
+  if (MODE === 'demo') {
+    if (!demoSenders.has(topic)) demoSenders.set(topic, new BroadcastChannel(topic));
+    demoSenders.get(topic).postMessage({ event, payload });
+    return Promise.resolve();
+  }
+  return fetch(`${SUPABASE_URL}/realtime/v1/api/broadcast`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ topic, event, payload }] }),
+    keepalive: event === 'bye',
+  }).catch(() => {}); // 한 번 놓쳐도 다음 접속 확인 때 다시 맞춰진다
+}
+
+// 교사: 교사 우편함을 듣고, 방 전체나 학생 한 명에게 보낸다
+export async function openTeacherLink(code, onMessage) {
+  const t = topics(code);
+  const close = await listen([t.inbox], onMessage);
   return {
-    send: (event, payload) => ch.send({ type: 'broadcast', event, payload }),
-    close: () => sb.removeChannel(ch),
+    broadcast: (event, payload) => post(t.room, event, payload),
+    sendTo: (id, event, payload) => post(t.student(id), event, payload),
+    close,
+  };
+}
+
+// 학생: 방 전체와 내 우편함을 듣고, 교사 우편함으로 보낸다
+export async function openStudentLink(code, id, onMessage) {
+  const t = topics(code);
+  const close = await listen([t.room, t.student(id)], onMessage);
+  return {
+    send: (event, payload) => post(t.inbox, event, payload),
+    close,
   };
 }
 

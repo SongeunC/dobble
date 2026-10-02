@@ -1,4 +1,4 @@
-import { openChannel } from './backend.js';
+import { openStudentLink } from './backend.js';
 import { renderCard } from './dobble.js';
 import { chime } from './sound.js';
 
@@ -92,7 +92,7 @@ async function join(code, nick, id = crypto.randomUUID()) {
   me = { code, nick, id };
   welcomed = false;
   try {
-    channel = await openChannel(code, onMessage);
+    channel = await openStudentLink(code, id, onMessage);
   } catch (e) {
     return leave(e.message);
   }
@@ -131,11 +131,11 @@ function startHeartbeat() {
   heartbeat = setInterval(() => {
     if (!channel) return clearInterval(heartbeat);
     send('ping', { cardId });
-    if (Date.now() - lastHeard > 15000) {
+    if (Date.now() - lastHeard > 30000) {
       $('lostView').hidden = false;
       send('hello');
     }
-  }, 4000);
+  }, 10000); // 10초마다 접속 확인 (교사는 12초마다 판 상태를 알림)
 }
 
 $('foundBtn').addEventListener('click', () => {
