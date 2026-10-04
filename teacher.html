@@ -73,6 +73,12 @@
     .score { font-weight: 800; font-size: 20px; }
     .switch { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
     .switch input { width: 20px; height: 20px; }
+    .pile { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; align-items: center; padding: 14px 16px; border-radius: 12px; background: var(--accent-soft); }
+    .pile-label { font-size: 13px; color: var(--muted); font-weight: 700; }
+    .pile-count { font-size: 40px; font-weight: 900; line-height: 1; color: var(--accent); grid-row: span 2; font-variant-numeric: tabular-nums; }
+    .pile-track { height: 10px; border-radius: 99px; background: #fff; overflow: hidden; }
+    .pile-bar { height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s; }
+    .pile-note { grid-column: 1 / -1; font-size: 14px; color: var(--muted); }
 
     @media (max-width: 760px) {
       .room { grid-template-columns: 1fr; }
@@ -172,6 +178,12 @@
             <button class="btn danger" id="endBtn">종료</button>
             <button class="btn" id="closeRoomBtn">방 닫기</button>
           </div>
+          <div class="pile">
+            <div class="pile-count" id="pileCount">57장</div>
+            <div class="pile-label">남은 카드</div>
+            <div class="pile-track"><div class="pile-bar" id="pileBar"></div></div>
+            <div class="pile-note" id="pileNote"></div>
+          </div>
           <div>
             <div class="row spread"><strong id="studentCount">학생 0명</strong></div>
             <table>
@@ -188,8 +200,8 @@
     <section id="summaryView" class="stack" hidden>
       <div class="row spread">
         <div>
-          <h2>판 결과</h2>
-          <p class="muted" style="margin:0">이 결과는 저장되지 않아요. 화면을 닫으면 사라집니다.</p>
+          <h2 id="summaryTitle">판 결과</h2>
+          <p class="muted" style="margin:0"><span id="summaryNote"></span>이 결과는 저장되지 않아요. 화면을 닫으면 사라집니다.</p>
         </div>
         <div class="row">
           <button class="btn primary" id="againBtn">같은 방에서 한 판 더</button>

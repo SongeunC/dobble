@@ -14,7 +14,6 @@ const $ = (id) => document.getElementById(id);
 const views = ['loginView', 'setsView', 'editorView', 'roomView', 'summaryView'];
 const ROOM_KEY = 'dobble-room';
 const ONLINE_MS = 25000;   // 이 시간 안에 신호가 있으면 접속 중 (학생은 10초마다 신호)
-const RELEASE_MS = 60000;  // 이 시간 넘게 끊기면 카드를 다른 학생에게 줄 수 있다
 
 function show(name) {
   for (const v of views) $(v).hidden = v !== name;
@@ -336,7 +335,8 @@ $('cancelEditBtn').onclick = () => openSets();
 // 교사 기기가 판의 진행자다. 카드 배정과 점수는 여기서만 계산하고, 새로고침에 대비해 탭 저장소에 남긴다.
 
 let room = null;
-// room = { code, setName, items: [{kind,text?,url?}] × 57, status, sound, students: { id: { nick, score, cardId, lastSeen, joinedAt } } }
+// room = { code, setName, items: [{kind,text?,url?}] × 57, status, sound, pile: [카드 번호], endReason,
+//          students: { id: { nick, score, cardId, lastSeen, joinedAt } } }
 let channel = null;
 let ticker = null;
 
@@ -352,7 +352,7 @@ async function startRoomFromSet(s) {
       ? { kind: 'image', url: await api.imageUrl(i.image) }
       : { kind: 'word', text: i.text })));
   } catch (e) { return handleError('setsError', e); }
-  room = { code: api.makeRoomCode(), setName: s.name, items, status: 'lobby', sound: false, students: {} };
+  room = { code: api.makeRoomCode(), setName: s.name, items, status: 'lobby', sound: false, pile: [], endReason: null, students: {} };
   await enterRoom();
 }
 
@@ -406,16 +406,11 @@ function broadcastState() { send('state', { status: room.status, sound: room.sou
 
 function isOnline(st) { return Date.now() - st.lastSeen < ONLINE_MS; }
 
-// 지금 다른 학생이 들고 있지 않은 카드 중 무작위로 고른다
-function pickCard(exceptId, exceptCard) {
-  const held = new Set();
-  for (const [id, st] of Object.entries(room.students)) {
-    if (id !== exceptId && st.cardId !== null && Date.now() - st.lastSeen < RELEASE_MS) held.add(st.cardId);
-  }
-  const free = [];
-  for (let c = 0; c < CARDS.length; c++) if (!held.has(c) && c !== exceptCard) free.push(c);
-  if (!free.length) return null;
-  return free[Math.floor(Math.random() * free.length)];
+// 실물 도블처럼 카드 더미로 진행한다. 시작할 때 57장을 섞어 한 장씩 나눠 주고 나머지는 더미로 둔다.
+// 찾으면 더미 맨 위 카드를 받고 쓰던 카드는 버린다(다시 나오지 않음). 더미가 바닥나면 판이 끝난다.
+// 모든 카드는 한 번씩만 나오므로 두 학생이 같은 카드를 갖는 일이 없다.
+function drawCard() {
+  return room.pile?.length ? room.pile.pop() : null;
 }
 
 function sendCard(id) {
@@ -424,15 +419,19 @@ function sendCard(id) {
   send('card', { to: id, cardId: st.cardId, items: CARDS[st.cardId].map((s) => room.items[s]) });
 }
 
-// 카드가 없거나, 오래 끊긴 사이 다른 학생에게 넘어갔으면 새로 준다
+// 카드가 없으면(늦게 들어온 학생) 더미에서 한 장 주고, 있으면 다시 보내 준다
 function ensureCard(id) {
   const st = room.students[id];
-  const takenByOther = st.cardId !== null && Object.entries(room.students)
-    .some(([o, other]) => o !== id && other.cardId === st.cardId && isOnline(other));
-  if (st.cardId === null || takenByOther) st.cardId = pickCard(id, null);
+  if (st.cardId === null) st.cardId = drawCard();
   if (st.cardId === null) return false;
   sendCard(id);
   return true;
+}
+
+function endGame(reason) {
+  room.endReason = reason;
+  setStatus('ended');
+  showSummary();
 }
 
 function onMessage(event, p) {
@@ -453,18 +452,21 @@ function onMessage(event, p) {
     send('welcome', { to: p.id });
     broadcastState();
     if ((room.status === 'playing' || room.status === 'paused') && !ensureCard(p.id)) {
-      send('reject', { to: p.id, reason: '방이 가득 찼어요.' });
+      send('reject', { to: p.id, reason: '카드가 다 떨어져서 이번 판에는 들어올 수 없어요. 다음 판에 들어와 주세요.' });
       delete room.students[p.id];
     }
   } else if (event === 'ping') {
     if (room.status === 'playing' && p.cardId !== st.cardId) ensureCard(p.id);
   } else if (event === 'found') {
     if (room.status !== 'playing') return;
-    if (p.cardId === st.cardId) {
-      st.score += 1;
-      st.cardId = pickCard(p.id, st.cardId) ?? st.cardId;
+    if (p.cardId !== st.cardId) { sendCard(p.id); return; } // 이미 바뀐 카드로 누른 신호는 무시
+    st.score += 1;
+    const next = drawCard();
+    if (next !== null) {
+      st.cardId = next;
+      sendCard(p.id);
     }
-    sendCard(p.id);
+    if (!room.pile.length) endGame('deck');
   }
   saveRoom();
   renderRoom();
@@ -486,7 +488,8 @@ function renderRoom() {
   const online = list.filter(([, st]) => isOnline(st)).length;
   $('studentCount').textContent = `학생 ${list.length}명 · 접속 ${online}명`;
   $('noStudents').hidden = list.length > 0;
-  $('startBtn').disabled = online === 0;
+  $('startBtn').disabled = online === 0 || online >= CARDS.length;
+  renderPile(online);
   $('studentRows').innerHTML = list.map(([, st]) => `
     <tr>
       <td>${esc(st.nick)}</td>
@@ -502,18 +505,46 @@ function setStatus(status) {
   renderRoom();
 }
 
+function renderPile(online) {
+  const total = CARDS.length;
+  if (room.status === 'lobby') {
+    $('pileCount').textContent = `${total}장`;
+    $('pileNote').textContent = online >= total
+      ? `학생이 ${total}명 이상이면 시작할 수 없어요.`
+      : `시작하면 학생 ${online}명에게 한 장씩 나눠 주고, 남은 ${total - online}장을 다 찾으면 끝나요.`;
+    $('pileBar').style.width = '100%';
+    return;
+  }
+  const left = room.pile.length;
+  $('pileCount').textContent = `${left}장`;
+  $('pileNote').textContent = left ? `남은 카드를 다 찾으면 판이 끝나요.` : '카드가 다 떨어졌어요.';
+  $('pileBar').style.width = `${(left / (room.pileStart || 1)) * 100}%`;
+}
+
+function shuffled(n) {
+  const a = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 $('startBtn').onclick = () => {
+  room.pile = shuffled(CARDS.length);
+  room.endReason = null;
   for (const st of Object.values(room.students)) { st.score = 0; st.cardId = null; }
   setStatus('playing');
   for (const [id, st] of Object.entries(room.students)) if (isOnline(st)) ensureCard(id);
+  room.pileStart = room.pile.length;
   saveRoom();
+  renderRoom();
 };
 $('pauseBtn').onclick = () => setStatus('paused');
 $('resumeBtn').onclick = () => setStatus('playing');
 $('endBtn').onclick = () => {
   if (!confirm('판을 끝낼까요?')) return;
-  setStatus('ended');
-  showSummary();
+  endGame('manual');
 };
 $('soundToggle').onchange = (e) => {
   room.sound = e.target.checked;
@@ -531,6 +562,9 @@ $('againBtn').onclick = () => {
 
 function showSummary() {
   show('summaryView');
+  const found = Object.values(room.students).reduce((n, st) => n + st.score, 0);
+  $('summaryTitle').textContent = room.endReason === 'deck' ? '카드가 다 떨어졌어요! 판 끝' : '판 결과';
+  $('summaryNote').textContent = `모두 합쳐 ${found}번 찾았어요. `;
   const list = Object.values(room.students).sort((a, b) => b.score - a.score);
   let rank = 0;
   let prev = null;
