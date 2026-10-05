@@ -335,8 +335,9 @@ $('cancelEditBtn').onclick = () => openSets();
 // 교사 기기가 판의 진행자다. 카드 배정과 점수는 여기서만 계산하고, 새로고침에 대비해 탭 저장소에 남긴다.
 
 let room = null;
-// room = { code, setName, items: [{kind,text?,url?}] × 57, status, sound, pile: [카드 번호], endReason,
-//          students: { id: { nick, score, cardId, lastSeen, joinedAt } } }
+// room = { code, setName, items: [{kind,text?,url?}] × 57, status, sound, endReason,
+//          groupCount, groupMode: 'random' | 'join' | 'manual', groups: [{ pile: [카드 번호], pileStart, done }],
+//          students: { id: { nick, score, cardId, group, lastSeen, joinedAt } } }
 let channel = null;
 let ticker = null;
 
@@ -352,7 +353,10 @@ async function startRoomFromSet(s) {
       ? { kind: 'image', url: await api.imageUrl(i.image) }
       : { kind: 'word', text: i.text })));
   } catch (e) { return handleError('setsError', e); }
-  room = { code: api.makeRoomCode(), setName: s.name, items, status: 'lobby', sound: false, pile: [], endReason: null, students: {} };
+  room = {
+    code: api.makeRoomCode(), setName: s.name, items, status: 'lobby', sound: false, endReason: null,
+    groupCount: null, groupMode: 'random', groups: [], students: {},
+  };
   await enterRoom();
 }
 
@@ -402,15 +406,60 @@ function send(event, payload) {
   if (payload?.to) channel.sendTo(payload.to, event, payload);
   else channel.broadcast(event, payload);
 }
-function broadcastState() { send('state', { status: room.status, sound: room.sound }); }
+
+// 판 상태와 함께 누가 몇 모둠인지, 어느 모둠이 끝났는지 알린다
+function broadcastState() {
+  const groups = {};
+  for (const [id, st] of Object.entries(room.students)) if (st.group) groups[id] = st.group;
+  const done = (room.groups || []).map((g, i) => (g.done ? i + 1 : 0)).filter(Boolean);
+  send('state', { status: room.status, sound: room.sound, groups, done });
+}
 
 function isOnline(st) { return Date.now() - st.lastSeen < ONLINE_MS; }
 
-// 실물 도블처럼 카드 더미로 진행한다. 시작할 때 57장을 섞어 한 장씩 나눠 주고 나머지는 더미로 둔다.
-// 찾으면 더미 맨 위 카드를 받고 쓰던 카드는 버린다(다시 나오지 않음). 더미가 바닥나면 판이 끝난다.
-// 모든 카드는 한 번씩만 나오므로 두 학생이 같은 카드를 갖는 일이 없다.
-function drawCard() {
-  return room.pile?.length ? room.pile.pop() : null;
+// ---------- 모둠 ----------
+// 모둠마다 57장 더미를 따로 둔다. 학생은 같은 모둠 친구와만 카드를 비교하므로,
+// 모둠 안에서만 카드가 겹치지 않으면 된다.
+
+const groupNos = () => Array.from({ length: room.groupCount }, (_, i) => i + 1);
+const members = (g, onlineOnly = false) => Object.entries(room.students)
+  .filter(([, st]) => st.group === g && (!onlineOnly || isOnline(st)));
+const onlineStudents = () => Object.entries(room.students)
+  .filter(([, st]) => isOnline(st))
+  .sort((a, b) => a[1].joinedAt - b[1].joinedAt);
+
+// 4명 안팎이 한 모둠이 되도록 제안한다
+function suggestGroupCount(n) {
+  return Math.max(1, Math.min(10, Math.round(n / 4) || 1));
+}
+
+// 인원이 가장 적은 모둠. activeOnly면 판이 진행 중인(더미가 남은) 모둠만 본다.
+function smallestGroup(activeOnly) {
+  const candidates = groupNos().filter((g) => !activeOnly || (room.groups[g - 1] && !room.groups[g - 1].done));
+  if (!candidates.length) return null;
+  return candidates.reduce((best, g) => (members(g, true).length < members(best, true).length ? g : best));
+}
+
+// 랜덤 또는 입장 순으로 고르게 나눈다: 22명 5모둠이면 5·4·5·4·4명
+function assignGroups(mode) {
+  const list = onlineStudents();
+  if (mode === 'random') {
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
+    }
+  }
+  const G = room.groupCount;
+  list.forEach(([, st], i) => { st.group = Math.floor((i * G) / list.length) + 1; });
+}
+
+// ---------- 카드 더미 ----------
+// 실물 도블처럼 카드 더미로 진행한다. 시작할 때 모둠마다 57장을 섞어 한 장씩 나눠 주고 나머지는 더미로 둔다.
+// 찾으면 더미 맨 위 카드를 받고 쓰던 카드는 버린다(다시 나오지 않음). 모둠 더미가 바닥나면 그 모둠은 끝난다.
+
+function drawCard(g) {
+  const pile = room.groups[g - 1]?.pile;
+  return pile?.length ? pile.pop() : null;
 }
 
 function sendCard(id) {
@@ -419,10 +468,16 @@ function sendCard(id) {
   send('card', { to: id, cardId: st.cardId, items: CARDS[st.cardId].map((s) => room.items[s]) });
 }
 
-// 카드가 없으면(늦게 들어온 학생) 더미에서 한 장 주고, 있으면 다시 보내 준다
+// 카드가 없으면 한 장 주고, 있으면 다시 보내 준다. 모둠이 없으면(늦게 온 학생) 인원이 적은 모둠에 넣는다.
 function ensureCard(id) {
   const st = room.students[id];
-  if (st.cardId === null) st.cardId = drawCard();
+  if (!st.group || !room.groups[st.group - 1]) {
+    st.group = smallestGroup(true);
+    if (!st.group) return false;
+    broadcastState();
+  }
+  if (room.groups[st.group - 1].done) return true; // 모둠이 이미 끝났으면 카드 없이 끝 화면
+  if (st.cardId === null) st.cardId = drawCard(st.group);
   if (st.cardId === null) return false;
   sendCard(id);
   return true;
@@ -444,7 +499,7 @@ function onMessage(event, p) {
   }
   if (!st) {
     if (event === 'found') return;
-    st = room.students[p.id] = { nick: String(p.nick || '학생').slice(0, 10), score: 0, cardId: null, lastSeen: 0, joinedAt: Date.now() };
+    st = room.students[p.id] = { nick: String(p.nick || '학생').slice(0, 10), score: 0, cardId: null, group: null, lastSeen: 0, joinedAt: Date.now() };
   }
   st.lastSeen = Date.now();
 
@@ -452,50 +507,106 @@ function onMessage(event, p) {
     send('welcome', { to: p.id });
     broadcastState();
     if ((room.status === 'playing' || room.status === 'paused') && !ensureCard(p.id)) {
-      send('reject', { to: p.id, reason: '카드가 다 떨어져서 이번 판에는 들어올 수 없어요. 다음 판에 들어와 주세요.' });
+      send('reject', { to: p.id, reason: '모든 모둠의 카드가 다 떨어져서 이번 판에는 들어올 수 없어요. 다음 판에 들어와 주세요.' });
       delete room.students[p.id];
     }
   } else if (event === 'ping') {
     if (room.status === 'playing' && p.cardId !== st.cardId) ensureCard(p.id);
   } else if (event === 'found') {
-    if (room.status !== 'playing') return;
+    if (room.status !== 'playing' || !st.group) return;
+    const grp = room.groups[st.group - 1];
+    if (!grp || grp.done) return;
     if (p.cardId !== st.cardId) { sendCard(p.id); return; } // 이미 바뀐 카드로 누른 신호는 무시
     st.score += 1;
-    const next = drawCard();
+    const next = drawCard(st.group);
     if (next !== null) {
       st.cardId = next;
       sendCard(p.id);
     }
-    if (!room.pile.length) endGame('deck');
+    if (!grp.pile.length) {
+      grp.done = true;
+      broadcastState();
+      if (room.groups.every((g) => g.done)) endGame('deck');
+    }
   }
   saveRoom();
   renderRoom();
 }
 
+// ---------- 방 화면 ----------
+
 const STATUS_LABEL = { lobby: '입장 중', playing: '진행 중', paused: '일시정지', ended: '종료' };
+const MODE_HINT = {
+  random: '‘모둠 나누기’를 누르면 접속한 학생을 무작위로 고르게 나눠요. 나눈 뒤 아래 표에서 한 명씩 바꿀 수 있어요.',
+  join: '‘모둠 나누기’를 누르면 들어온 순서대로 앞에서부터 나눠요. 나눈 뒤 아래 표에서 한 명씩 바꿀 수 있어요.',
+  manual: '아래 표에서 학생마다 모둠을 골라 주세요.',
+};
 
 function renderRoom() {
   if (!room || $('roomView').hidden) return;
   const s = room.status;
+  const lobby = s === 'lobby';
   $('statusPill').textContent = STATUS_LABEL[s];
   $('statusPill').className = `status-pill ${s}`;
-  $('startBtn').hidden = s !== 'lobby';
+  $('startBtn').hidden = !lobby;
   $('pauseBtn').hidden = s !== 'playing';
   $('resumeBtn').hidden = s !== 'paused';
-  $('endBtn').hidden = s === 'lobby';
-  $('closeRoomBtn').hidden = s !== 'lobby';
+  $('endBtn').hidden = lobby;
+  $('closeRoomBtn').hidden = !lobby;
+
   const list = Object.entries(room.students).sort((a, b) => a[1].joinedAt - b[1].joinedAt);
-  const online = list.filter(([, st]) => isOnline(st)).length;
-  $('studentCount').textContent = `학생 ${list.length}명 · 접속 ${online}명`;
+  const online = list.filter(([, st]) => isOnline(st));
+  // 선생님이 손대기 전까지는 들어온 학생 수에 맞춰 모둠 수를 제안한다
+  if (lobby && !room.groupTouched) room.groupCount = suggestGroupCount(online.length);
+  $('studentCount').textContent = `학생 ${list.length}명 · 접속 ${online.length}명 · ${room.groupCount}모둠`;
   $('noStudents').hidden = list.length > 0;
-  $('startBtn').disabled = online === 0 || online >= CARDS.length;
-  renderPile(online);
-  $('studentRows').innerHTML = list.map(([, st]) => `
-    <tr>
-      <td>${esc(st.nick)}</td>
-      <td><span class="dot ${isOnline(st) ? '' : 'off'}"></span>${isOnline(st) ? '접속' : '끊김'}</td>
-      <td class="num score">${st.score}</td>
-    </tr>`).join('');
+  $('startBtn').disabled = online.length < 2;
+
+  // 모둠 나누기(시작 전에만)
+  $('groupingBox').hidden = !lobby;
+  $('studentTableBox').hidden = !lobby;
+  if (lobby) {
+    if (document.activeElement !== $('groupCount')) $('groupCount').value = room.groupCount;
+    for (const b of $('groupModeSeg').querySelectorAll('button')) b.classList.toggle('on', b.dataset.mode === room.groupMode);
+    $('assignBtn').hidden = room.groupMode === 'manual';
+    $('groupHint').textContent = MODE_HINT[room.groupMode];
+    // 고르는 중인 목록은 다시 그리지 않는다(드롭다운이 닫히지 않게)
+    if (!$('studentRows').contains(document.activeElement)) {
+      const options = (g) => ['<option value="">미정</option>', ...groupNos().map((n) => `<option value="${n}"${g === n ? ' selected' : ''}>${n}모둠</option>`)].join('');
+      $('studentRows').innerHTML = list.map(([id, st]) => `
+        <tr>
+          <td>${esc(st.nick)}</td>
+          <td><span class="dot ${isOnline(st) ? '' : 'off'}"></span>${isOnline(st) ? '접속' : '끊김'}</td>
+          <td><select class="group-select ${st.group ? '' : 'unset'}" data-id="${esc(id)}">${options(st.group)}</select></td>
+        </tr>`).join('');
+    }
+  }
+  const unassigned = online.filter(([, st]) => !st.group);
+  $('unassigned').textContent = lobby && unassigned.length
+    ? `모둠 미정 ${unassigned.length}명 (시작하면 인원이 적은 모둠에 들어가요)` : '';
+
+  renderBoards();
+}
+
+function renderBoards() {
+  const playing = room.status !== 'lobby';
+  $('boards').innerHTML = groupNos().map((g) => {
+    const mem = members(g).sort((a, b) => (playing ? b[1].score - a[1].score : a[1].joinedAt - b[1].joinedAt));
+    const grp = room.groups?.[g - 1];
+    let meta = `${mem.length}명`;
+    let bar = '';
+    if (playing && grp) {
+      meta = grp.done ? '카드를 다 찾았어요!' : `남은 카드 ${grp.pile.length}장`;
+      bar = `<div class="board-track"><div class="board-bar" style="width:${grp.pileStart ? (grp.pile.length / grp.pileStart) * 100 : 0}%"></div></div>`;
+    }
+    const rows = mem.length
+      ? `<ul>${mem.map(([, st]) => `<li><span class="dot ${isOnline(st) ? '' : 'off'}"></span>${esc(st.nick)}${playing ? `<span class="pts">${st.score}</span>` : ''}</li>`).join('')}</ul>`
+      : '<div class="empty-note">아직 아무도 없어요</div>';
+    return `<div class="board ${playing && grp?.done ? 'done' : ''}">
+      <div class="board-head"><span class="board-name">${g}모둠</span><span class="board-meta">${meta}</span></div>
+      ${bar}${rows}
+    </div>`;
+  }).join('');
 }
 
 function setStatus(status) {
@@ -503,22 +614,6 @@ function setStatus(status) {
   broadcastState();
   saveRoom();
   renderRoom();
-}
-
-function renderPile(online) {
-  const total = CARDS.length;
-  if (room.status === 'lobby') {
-    $('pileCount').textContent = `${total}장`;
-    $('pileNote').textContent = online >= total
-      ? `학생이 ${total}명 이상이면 시작할 수 없어요.`
-      : `시작하면 학생 ${online}명에게 한 장씩 나눠 주고, 남은 ${total - online}장을 다 찾으면 끝나요.`;
-    $('pileBar').style.width = '100%';
-    return;
-  }
-  const left = room.pile.length;
-  $('pileCount').textContent = `${left}장`;
-  $('pileNote').textContent = left ? `남은 카드를 다 찾으면 판이 끝나요.` : '카드가 다 떨어졌어요.';
-  $('pileBar').style.width = `${(left / (room.pileStart || 1)) * 100}%`;
 }
 
 function shuffled(n) {
@@ -530,13 +625,56 @@ function shuffled(n) {
   return a;
 }
 
+$('groupCount').onchange = () => {
+  const n = Math.max(1, Math.min(10, Number($('groupCount').value) || 1));
+  room.groupCount = n;
+  room.groupTouched = true;
+  for (const st of Object.values(room.students)) if (st.group > n) st.group = null;
+  broadcastState();
+  saveRoom();
+  renderRoom();
+};
+$('groupModeSeg').onclick = (e) => {
+  const mode = e.target.closest('button')?.dataset.mode;
+  if (!mode) return;
+  room.groupMode = mode;
+  saveRoom();
+  renderRoom();
+};
+$('assignBtn').onclick = () => {
+  room.groupTouched = true;
+  assignGroups(room.groupMode);
+  broadcastState();
+  saveRoom();
+  renderRoom();
+};
+$('studentRows').onchange = (e) => {
+  const sel = e.target.closest('select');
+  const st = sel && room.students[sel.dataset.id];
+  if (!st) return;
+  st.group = Number(sel.value) || null;
+  room.groupTouched = true;
+  sel.blur();
+  broadcastState();
+  saveRoom();
+  renderRoom();
+};
+
 $('startBtn').onclick = () => {
-  room.pile = shuffled(CARDS.length);
+  showError('roomError', null);
+  // 모둠이 없는 학생은 인원이 적은 모둠에 넣는다
+  for (const [, st] of onlineStudents()) if (!st.group || st.group > room.groupCount) st.group = smallestGroup(false);
+  const alone = groupNos().filter((g) => members(g, true).length === 1);
+  if (alone.length) {
+    renderRoom();
+    return showError('roomError', `${alone.join(', ')}모둠에 학생이 한 명뿐이에요. 혼자서는 카드를 비교할 수 없어요. 모둠 수를 줄이거나 다시 나눠 주세요.`);
+  }
+  room.groups = groupNos().map((g) => ({ pile: shuffled(CARDS.length), pileStart: 0, done: members(g, true).length === 0 }));
   room.endReason = null;
   for (const st of Object.values(room.students)) { st.score = 0; st.cardId = null; }
   setStatus('playing');
-  for (const [id, st] of Object.entries(room.students)) if (isOnline(st)) ensureCard(id);
-  room.pileStart = room.pile.length;
+  for (const [id] of onlineStudents()) ensureCard(id);
+  for (const g of room.groups) g.pileStart = g.pile.length;
   saveRoom();
   renderRoom();
 };
@@ -555,6 +693,7 @@ $('closeRoomBtn').onclick = () => closeRoom();
 $('finishBtn').onclick = () => closeRoom();
 $('againBtn').onclick = () => {
   for (const st of Object.values(room.students)) { st.score = 0; st.cardId = null; }
+  room.groups = [];
   setStatus('lobby');
   show('roomView');
   renderRoom();
@@ -562,18 +701,29 @@ $('againBtn').onclick = () => {
 
 function showSummary() {
   show('summaryView');
-  const found = Object.values(room.students).reduce((n, st) => n + st.score, 0);
-  $('summaryTitle').textContent = room.endReason === 'deck' ? '카드가 다 떨어졌어요! 판 끝' : '판 결과';
+  const all = Object.values(room.students);
+  const found = all.reduce((n, st) => n + st.score, 0);
+  $('summaryTitle').textContent = room.endReason === 'deck' ? '모든 모둠이 카드를 다 찾았어요!' : '판 결과';
   $('summaryNote').textContent = `모두 합쳐 ${found}번 찾았어요. `;
-  const list = Object.values(room.students).sort((a, b) => b.score - a.score);
-  let rank = 0;
-  let prev = null;
-  $('summaryRows').innerHTML = list.length
-    ? list.map((st, i) => {
-      if (st.score !== prev) { rank = i + 1; prev = st.score; }
-      return `<tr><td class="num">${rank}</td><td>${esc(st.nick)}</td><td class="num score">${st.score}</td></tr>`;
+  const sections = groupNos()
+    .map((g) => ({ g, list: all.filter((st) => st.group === g).sort((a, b) => b.score - a.score), grp: room.groups?.[g - 1] }))
+    .filter(({ list }) => list.length);
+  $('summaryGroups').innerHTML = sections.length
+    ? sections.map(({ g, list, grp }) => {
+      let rank = 0;
+      let prev = null;
+      const rows = list.map((st, i) => {
+        if (st.score !== prev) { rank = i + 1; prev = st.score; }
+        return `<tr><td class="num" style="width:44px">${rank}</td><td>${esc(st.nick)}</td><td class="num score">${st.score}</td></tr>`;
+      }).join('');
+      const sum = list.reduce((n, st) => n + st.score, 0);
+      return `<div class="panel">
+        <h3>${g}모둠</h3>
+        <p class="muted" style="margin:0 0 8px">${grp?.done ? '카드를 다 찾았어요' : '진행 중에 끝냄'} · ${sum}번 찾음</p>
+        <table><thead><tr><th class="num">순위</th><th>닉네임</th><th class="num">찾은 횟수</th></tr></thead><tbody>${rows}</tbody></table>
+      </div>`;
     }).join('')
-    : '<tr><td colspan="3" class="muted">참여한 학생이 없어요.</td></tr>';
+    : '<div class="panel muted">참여한 학생이 없어요.</div>';
 }
 
 function closeRoom() {

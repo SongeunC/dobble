@@ -25,6 +25,8 @@
       border-radius: 18px;
     }
     .nick-tag { position: fixed; top: 10px; left: 12px; font-size: 14px; color: var(--muted); font-weight: 600; }
+    .group-tag { color: var(--accent); font-weight: 900; }
+    .group-big { display: block; font-size: 64px; font-weight: 900; color: var(--accent); line-height: 1.1; margin: 4px 0; }
 
     .card.swap-out { animation: swapOut 180ms ease-in forwards; }
     .card.swap-in { animation: swapIn 260ms cubic-bezier(.2,.9,.3,1.2); }
@@ -55,7 +57,9 @@
     </form>
 
     <div class="center-msg" id="waitView" hidden>
-      들어왔어요!<small>선생님이 시작하면 카드가 나와요.</small>
+      <span id="waitTitle">들어왔어요!</span>
+      <span class="group-big" id="waitGroup" hidden></span>
+      <small id="waitNote">선생님이 시작하면 카드가 나와요.</small>
     </div>
 
     <div class="play" id="playView" hidden>
@@ -64,7 +68,7 @@
     </div>
 
     <div class="center-msg" id="endView" hidden>
-      끝! 수고했어요.<small>선생님 화면을 봐 주세요.</small>
+      <span id="endTitle">끝! 수고했어요.</span><small id="endNote">선생님 화면을 봐 주세요.</small>
     </div>
   </main>
 

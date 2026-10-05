@@ -14,6 +14,8 @@ let cardId = null;
 let lastHeard = 0;
 let welcomed = false;
 let foundTimer = null;
+let group = null;      // 내 모둠 번호
+let groupDone = false; // 우리 모둠 카드가 다 떨어졌는지
 
 function show(name) {
   for (const v of views) $(v).hidden = v !== name;
@@ -30,9 +32,33 @@ function clearSession() {
 }
 
 function render() {
-  $('pauseView').hidden = status !== 'paused';
-  if (status === 'ended') return show('endView');
+  $('pauseView').hidden = status !== 'paused' || groupDone;
+  $('nickTag').innerHTML = '';
+  $('nickTag').append(me?.nick || '');
+  if (group) {
+    const tag = document.createElement('span');
+    tag.className = 'group-tag';
+    tag.textContent = ` · ${group}모둠`;
+    $('nickTag').append(tag);
+  }
+  if (status === 'ended') {
+    $('endTitle').textContent = '끝! 수고했어요.';
+    $('endNote').textContent = '선생님 화면을 봐 주세요.';
+    return show('endView');
+  }
+  if (groupDone && (status === 'playing' || status === 'paused')) {
+    $('endTitle').textContent = '우리 모둠 끝!';
+    $('endNote').textContent = '카드를 다 찾았어요. 다른 모둠이 끝날 때까지 기다려요.';
+    return show('endView');
+  }
   if ((status === 'playing' || status === 'paused') && cardId !== null) return show('playView');
+  // 기다리는 동안: 모둠이 정해지면 크게 보여 준다
+  $('waitGroup').hidden = !group;
+  $('waitGroup').textContent = group ? `${group}모둠` : '';
+  $('waitTitle').textContent = group ? '우리 모둠은' : '들어왔어요!';
+  $('waitNote').textContent = group
+    ? '모둠 친구들과 모여 앉으세요. 선생님이 시작하면 카드가 나와요.'
+    : '선생님이 시작하면 카드가 나와요.';
   show('waitView');
 }
 
@@ -54,6 +80,9 @@ function onMessage(event, p) {
     const wasStatus = status;
     status = p.status;
     sound = !!p.sound;
+    group = p.groups?.[me.id] ?? null;
+    groupDone = !!group && (p.done || []).includes(group);
+    if (groupDone) clearTimeout(foundTimer);
     if (status === 'lobby' || status === 'ended') cardId = null;
     // 판이 진행 중인데 카드가 없으면 다시 인사해서 카드를 받는다
     if (status === 'playing' && cardId === null && wasStatus !== 'playing') send('hello');

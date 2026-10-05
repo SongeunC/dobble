@@ -73,12 +73,34 @@
     .score { font-weight: 800; font-size: 20px; }
     .switch { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
     .switch input { width: 20px; height: 20px; }
-    .pile { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; align-items: center; padding: 14px 16px; border-radius: 12px; background: var(--accent-soft); }
-    .pile-label { font-size: 13px; color: var(--muted); font-weight: 700; }
-    .pile-count { font-size: 40px; font-weight: 900; line-height: 1; color: var(--accent); grid-row: span 2; font-variant-numeric: tabular-nums; }
-    .pile-track { height: 10px; border-radius: 99px; background: #fff; overflow: hidden; }
-    .pile-bar { height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s; }
-    .pile-note { grid-column: 1 / -1; font-size: 14px; color: var(--muted); }
+    /* 모둠 나누기 */
+    .grouping { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 12px; background: var(--accent-soft); }
+    .grouping .ask { font-weight: 800; }
+    .num-input { width: 72px; text-align: center; font-weight: 800; font-size: 18px; padding: 8px; }
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+    .seg button { border: none; background: none; padding: 8px 14px; font-weight: 700; cursor: pointer; color: var(--muted); }
+    .seg button + button { border-left: 1px solid var(--line); }
+    .seg button.on { background: var(--accent); color: var(--accent-ink); }
+    .group-select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-weight: 700; }
+    .group-select.unset { color: var(--warn); border-color: var(--warn); }
+
+    /* 모둠 판 */
+    .boards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+    .board { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+    .board.done { background: #eef9f2; border-color: #b6e3c6; }
+    .board-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .board-name { font-size: 20px; font-weight: 900; }
+    .board-meta { font-size: 13px; color: var(--muted); font-weight: 700; white-space: nowrap; }
+    .board.done .board-meta { color: var(--good); }
+    .board-track { height: 8px; border-radius: 99px; background: #eef1f6; overflow: hidden; }
+    .board-bar { height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s; }
+    .board ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .board li { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+    .board li .pts { margin-left: auto; font-weight: 900; font-variant-numeric: tabular-nums; }
+    .board .empty-note { color: var(--muted); font-size: 14px; }
+    .unassigned { font-size: 14px; color: var(--warn); font-weight: 600; }
+    .summary-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .summary-groups h3 { margin: 0 0 6px; font-size: 18px; }
 
     @media (max-width: 760px) {
       .room { grid-template-columns: 1fr; }
@@ -178,16 +200,28 @@
             <button class="btn danger" id="endBtn">종료</button>
             <button class="btn" id="closeRoomBtn">방 닫기</button>
           </div>
-          <div class="pile">
-            <div class="pile-count" id="pileCount">57장</div>
-            <div class="pile-label">남은 카드</div>
-            <div class="pile-track"><div class="pile-bar" id="pileBar"></div></div>
-            <div class="pile-note" id="pileNote"></div>
+          <div class="grouping" id="groupingBox">
+            <div class="row">
+              <label class="ask" for="groupCount">몇 모둠으로 만들까요?</label>
+              <input class="input num-input" type="number" id="groupCount" min="1" max="10">
+              <span class="ask">모둠</span>
+            </div>
+            <div class="row">
+              <div class="seg" id="groupModeSeg">
+                <button type="button" data-mode="random">랜덤</button>
+                <button type="button" data-mode="join">입장 순</button>
+                <button type="button" data-mode="manual">직접</button>
+              </div>
+              <button class="btn small" id="assignBtn">모둠 나누기</button>
+            </div>
+            <p class="muted" style="margin:0" id="groupHint"></p>
           </div>
-          <div>
-            <div class="row spread"><strong id="studentCount">학생 0명</strong></div>
+          <p class="error" id="roomError" hidden></p>
+          <div class="row spread"><strong id="studentCount">학생 0명</strong><span class="unassigned" id="unassigned"></span></div>
+          <div class="boards" id="boards"></div>
+          <div id="studentTableBox">
             <table>
-              <thead><tr><th>닉네임</th><th>상태</th><th class="num">찾은 횟수</th></tr></thead>
+              <thead><tr><th>닉네임</th><th>상태</th><th>모둠</th></tr></thead>
               <tbody id="studentRows"></tbody>
             </table>
             <p class="muted" id="noStudents">학생이 들어오면 여기에 보여요.</p>
@@ -208,12 +242,7 @@
           <button class="btn" id="finishBtn">방 닫기</button>
         </div>
       </div>
-      <div class="panel">
-        <table>
-          <thead><tr><th class="num" style="width:60px">순위</th><th>닉네임</th><th class="num">찾은 횟수</th></tr></thead>
-          <tbody id="summaryRows"></tbody>
-        </table>
-      </div>
+      <div class="summary-groups" id="summaryGroups"></div>
     </section>
   </main>
 
