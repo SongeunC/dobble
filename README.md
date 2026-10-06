@@ -35,6 +35,7 @@ python -m http.server 8765
 1. **Supabase 프로젝트** → SQL Editor에서 `schema.sql` 전체 실행.
 2. **모임 코드 정하기**: SQL Editor에서 아래 한 줄을 실행한다. 코드는 암호화되어 저장되고, 이 줄은 파일에 남기지 않는다. 바꿀 때도 같은 줄을 새 코드로 실행하면 예전 코드는 막힌다.
    `insert into private.team (id, code_hash) values (1, extensions.crypt('모임코드', extensions.gen_salt('bf'))) on conflict (id) do update set code_hash = excluded.code_hash;`
+   - 모임 코드는 **영문 소문자로** 정한다. 화면이 입력을 소문자로 바꾸고 한글은 같은 자리의 영문 자판 글자로 바꿔 보내므로, `dnjsal`로 정하면 `DNJSAL`이나 한글 상태로 친 `원미`로도 들어간다. 대문자나 한글로 정한 코드는 들어갈 수 없다.
 3. **`js/config.js`**: Project URL과 공개용 키(`sb_publishable_...`). 비밀 키(`sb_secret_...`)는 절대 넣지 않는다.
 4. **Netlify**: 이 폴더를 app.netlify.com/drop 에 끌어다 놓는다. 빌드 과정은 없다. 고친 뒤에는 사이트의 Deploys 화면에 다시 끌어다 놓는다.
 

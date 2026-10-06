@@ -1,5 +1,6 @@
 // 데이터, 교사 입장, 실시간 통신. Supabase 설정이 없으면 브라우저 안에서 도는 데모 모드로 동작한다.
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import { hangulToKeys } from './hangul.js';
 
 export const MODE = SUPABASE_URL && SUPABASE_ANON_KEY ? 'supabase' : 'demo';
 
@@ -44,7 +45,13 @@ async function rpc(fn, args = {}) {
   return data;
 }
 
-export async function signIn(code, name) {
+// 모임 코드는 영문 소문자로 맞춘다. 한글 상태로 치거나(원미) 대문자로 쳐도(DNJSAL) 같은 코드(dnjsal)가 된다.
+export function normalizeTeamCode(code) {
+  return hangulToKeys(code.trim()).toLowerCase();
+}
+
+export async function signIn(rawCode, name) {
+  const code = normalizeTeamCode(rawCode);
   await rpc('team_login', { p_code: code });
   localStorage.setItem(TEACHER_KEY, JSON.stringify({ code, name }));
 }
