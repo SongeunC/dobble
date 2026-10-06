@@ -182,15 +182,38 @@ $('foundBtn').addEventListener('click', () => {
 
 $('joinView').addEventListener('submit', (e) => {
   e.preventDefault();
-  const code = $('code').value.trim().toUpperCase();
+  cleanCode({ target: $('code') });
+  const code = $('code').value;
   const nick = $('nick').value.trim();
   if (code.length !== 6 || !nick) return;
   join(code, nick);
 });
 
-$('code').addEventListener('input', (e) => {
-  e.target.value = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '');
-});
+// 키보드가 한글 상태여도 코드가 입력되게, 한글을 같은 자리의 영문 자판으로 바꾼다 (ㄱ→R, 가→RK)
+const JAMO_KEYS = 'r R rt s sw sg e E f fr fa fq ft fx fv fg a q Q qt t T d w W c z x v g k o i O j p u P h hk ho hl y n nj np nl b m ml l'.split(' ');
+const INITIALS = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+const MEDIALS = 'ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ';
+const FINALS = ' ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ';
+function jamoKey(c) {
+  const i = c.charCodeAt(0) - 0x3131;
+  return i >= 0 && i < JAMO_KEYS.length ? JAMO_KEYS[i] : c;
+}
+function hangulToKeys(text) {
+  return [...text].map((c) => {
+    const s = c.charCodeAt(0) - 0xac00;
+    if (s < 0 || s > 11171) return jamoKey(c);
+    const f = FINALS[s % 28];
+    return jamoKey(INITIALS[Math.floor(s / 588)]) + jamoKey(MEDIALS[Math.floor(s / 28) % 21]) + (f === ' ' ? '' : jamoKey(f));
+  }).join('');
+}
+
+function cleanCode(e) {
+  if (e.isComposing) return; // 글자를 조합하는 중에 바꾸면 겹쳐 들어가므로 조합이 끝난 뒤 바꾼다
+  const clean = hangulToKeys(e.target.value).toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 6);
+  if (clean !== e.target.value) e.target.value = clean;
+}
+$('code').addEventListener('input', cleanCode);
+$('code').addEventListener('compositionend', cleanCode);
 
 window.addEventListener('pagehide', () => send('bye'));
 
