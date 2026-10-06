@@ -79,6 +79,15 @@
     <div class="center-msg">연결을 다시 찾는 중이에요…<small>잠시 기다려 주세요.</small></div>
   </div>
 
+  <script>
+    // 파일을 더블클릭해 열면 브라우저가 프로그램 파일(모듈)을 막아 화면이 비므로 여는 방법을 알려 준다
+    if (location.protocol === 'file:') {
+      document.querySelector('main').insertAdjacentHTML('afterbegin',
+        '<p class="error" style="text-align:center;line-height:1.6">파일을 더블클릭해서 열면 동작하지 않아요.<br>' +
+        '수업용 사이트 주소(netlify.app)로 열거나, 폴더에서 <b>python -m http.server 8765</b>를 실행한 뒤<br>' +
+        '<b>http://localhost:8765/' + location.pathname.split('/').pop() + '</b> 로 열어 주세요.</p>');
+    }
+  </script>
   <script type="module" src="js/student.js"></script>
 </body>
 </html>
